@@ -3,20 +3,22 @@ import os
 import re
 import sys
 import time
-from dotenv import load_dotenv, find_dotenv
-from openai import OpenAI, AuthenticationError, NotFoundError, PermissionDeniedError
-from risk_metrics import daily_metrics, add_flags, METRICS, RISK_METRICS
+
+from dotenv import find_dotenv, load_dotenv
+from openai import AuthenticationError, NotFoundError, OpenAI, PermissionDeniedError
+
+from risk_metrics import METRICS, RISK_METRICS, add_flags, daily_metrics
 
 load_dotenv(find_dotenv(usecwd=True))
 
-PROMPT = """You are a Trust and Safety analytics assistant.
-Write a 3 to 4 sentence daily risk summary for an analyst.
-Rules:
-- Use only numbers that appear in the JSON, quoted exactly as written.
-- Do not invent causes or mention anything not in the data.
-- The anomaly flag is based on fraud_rate_pct, tier_flag_rate_pct and avg_forest_score. transactions and avg_amount are context only.
-- A z_score of 3 or more in absolute value is a notable move. If the anomaly flag is false, say the day looks normal.
-- Reply with the summary only, no preamble and no reasoning.
+PROMPT = """You are a Trust and Safety analytics assistant writing a daily risk note for an analyst.
+Write exactly 3 sentences in plain English, with no quotation marks, no bullet points and no preamble.
+Sentence 1: name the risk metric with the largest absolute z_score, give its value and its 14-day baseline and its z_score, and say whether it is above or below baseline.
+Sentence 2: give the other two risk metrics with their values and baselines, and say whether each is within the normal range. A z_score between -2 and 2 is normal.
+Sentence 3: say whether the day needs analyst attention. It does if any risk metric has an absolute z_score of 3 or more, otherwise it does not.
+The risk metrics are fraud_rate_pct, tier_flag_rate_pct and avg_forest_score.
+transactions and avg_amount are context only, so mention them only if their absolute z_score is 2 or more.
+Use only numbers that appear in the data, copied exactly. Do not invent causes.
 Data:
 {data}
 """
@@ -40,7 +42,7 @@ def build_payload(m, day):
 
 def allowed_numbers(payload):
     nums = {float(payload["day"]), 14.0}
-    nums.update(float(i) for i in range(0, 6))
+    nums.update(float(i) for i in range(6))
     for item in payload["metrics"]:
         for key in ("value", "baseline_14d_avg", "z_score"):
             nums.add(abs(float(item[key])))
@@ -80,7 +82,7 @@ def generate(client, model, prompt, attempts=3):
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.2,
-                max_tokens=600,
+                max_tokens=2000,
             )
             content = resp.choices[0].message.content
             if content:
